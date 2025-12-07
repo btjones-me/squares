@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Commit Visualizer</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .stats {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .grid-container {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .week-row {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .day-square {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .day-square:hover {
+            border: 1px solid #8b949e;
+        }
+        
+        /* GitHub color scheme */
+        .level-0 { background-color: #161b22; }
+        .level-1 { background-color: #0e4429; }
+        .level-2 { background-color: #006d32; }
+        .level-3 { background-color: #26a641; }
+        .level-4 { background-color: #39d353; }
+        
+        .tooltip {
+            position: absolute;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            white-space: nowrap;
+            z-index: 1000;
+            pointer-events: none;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        
+        .legend-text {
+            font-size: 12px;
+            color: #8b949e;
+        }
+        
+        .legend-squares {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .legend-square {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        
+        .error {
+            color: #f85149;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #8b949e;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        function getCommitLevel(count) {
+            if (count === 0) return 0;
+            if (count === 1) return 1;
+            if (count <= 3) return 2;
+            if (count <= 6) return 3;
+            return 4;
+        }
+        
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+        }
+        
+        function App() {
+            const [commits, setCommits] = useState(null);
+            const [error, setError] = useState(null);
+            const [tooltip, setTooltip] = useState(null);
+            
+            useEffect(() => {
+                fetch('../commits.json')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to load commits.json');
+                        }
+                        return response.json();
+                    })
+                    .then(data => setCommits(data))
+                    .catch(err => setError(err.message));
+            }, []);
+            
+            if (error) {
+                return (
+                    <div className="container">
+                        <div className="error">
+                            <h2>Error loading commits</h2>
+                            <p>{error}</p>
+                            <p style={{ marginTop: '10px', fontSize: '14px' }}>
+                                Make sure to run 'make generate-commits' first.
+                            </p>
+                        </div>
+                    </div>
+                );
+            }
+            
+            if (!commits) {
+                return (
+                    <div className="container">
+                        <div className="loading">Loading commits...</div>
+                    </div>
+                );
+            }
+            
+            // Group commits by date
+            const commitsByDate = {};
+            commits.forEach(commit => {
+                const date = commit.date;
+                commitsByDate[date] = (commitsByDate[date] || 0) + 1;
+            });
+            
+            // Generate 400 days of data
+            const today = new Date();
+            const days = [];
+            for (let i = 399; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const dateStr = date.toISOString().split('T')[0];
+                days.push({
+                    date: dateStr,
+                    count: commitsByDate[dateStr] || 0
+                });
+            }
+            
+            // Organize into weeks (7 days per week, ~57 weeks)
+            const weeks = [];
+            for (let i = 0; i < days.length; i += 7) {
+                weeks.push(days.slice(i, i + 7));
+            }
+            
+            const totalCommits = commits.length;
+            const uniqueDays = Object.keys(commitsByDate).length;
+            
+            const handleSquareHover = (day, event) => {
+                const rect = event.target.getBoundingClientRect();
+                setTooltip({
+                    text: `${day.count} commit${day.count !== 1 ? 's' : ''} on ${formatDate(day.date)}`,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top - 10
+                });
+            };
+            
+            const handleSquareLeave = () => {
+                setTooltip(null);
+            };
+            
+            return (
+                <div className="container">
+                    <h1>Git Commit Activity</h1>
+                    <div className="stats">
+                        <strong>{totalCommits}</strong> commits across <strong>{uniqueDays}</strong> days
+                    </div>
+                    <div className="grid-container">
+                        {weeks.map((week, weekIdx) => (
+                            <div key={weekIdx} className="week-row">
+                                {week.map((day, dayIdx) => {
+                                    const level = getCommitLevel(day.count);
+                                    return (
+                                        <div
+                                            key={dayIdx}
+                                            className={`day-square level-${level}`}
+                                            onMouseEnter={(e) => handleSquareHover(day, e)}
+                                            onMouseLeave={handleSquareLeave}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        ))}
+                    </div>
+                    {tooltip && (
+                        <div 
+                            className="tooltip"
+                            style={{
+                                left: `${tooltip.x}px`,
+                                top: `${tooltip.y}px`,
+                                transform: 'translate(-50%, -100%)'
+                            }}
+                        >
+                            {tooltip.text}
+                        </div>
+                    )}
+                    <div className="legend">
+                        <span className="legend-text">Less</span>
+                        <div className="legend-squares">
+                            <div className="legend-square level-0"></div>
+                            <div className="legend-square level-1"></div>
+                            <div className="legend-square level-2"></div>
+                            <div className="legend-square level-3"></div>
+                            <div className="legend-square level-4"></div>
+                        </div>
+                        <span className="legend-text">More</span>
+                    </div>
+                </div>
+            );
+        }
+        
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
+
